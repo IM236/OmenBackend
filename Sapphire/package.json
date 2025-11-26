@@ -1,0 +1,13 @@
+{
+  "name": "Sapphire",
+  "version": "1.0.0",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "hardhat": "^3.0.15",
+    "typescript": "~5.8.0"
+  },
+  "dependencies": {
+    "@oasisprotocol/sapphire-paratime": "^2.2.0"
+  }
+}
