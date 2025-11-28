@@ -143,7 +143,7 @@ export const approveMarketHandler = async (req: Request, res: Response) => {
     data: market,
     message:
       decision === 'approve'
-        ? 'Market approved and activation initiated'
+        ? 'Market approved. Token deployment in progress.'
         : 'Market rejected'
   });
 };
@@ -167,11 +167,11 @@ export const activateMarketHandler = async (req: Request, res: Response) => {
     });
   }
 
-  const market = await marketService.activateMarket(req.params.id, admin);
+  const market = await marketService.activateMarket(req.params.id!, admin);
 
   res.json({
     data: market,
-    message: 'Market activated successfully'
+    message: 'Market activation initiated. Token deployment in progress.'
   });
 };
 
@@ -195,7 +195,7 @@ export const pauseMarketHandler = async (req: Request, res: Response) => {
   }
 
   const market = await marketService.pauseMarket(
-    req.params.id,
+    req.params.id!,
     req.body.entityId,
     admin
   );
@@ -226,7 +226,7 @@ export const archiveMarketHandler = async (req: Request, res: Response) => {
   }
 
   const market = await marketService.archiveMarket(
-    req.params.id,
+    req.params.id!,
     req.body.entityId,
     admin
   );
@@ -265,7 +265,7 @@ export const listMarketsHandler = async (req: Request, res: Response) => {
  * GET /api/v1/markets/:id
  */
 export const getMarketHandler = async (req: Request, res: Response) => {
-  const market = await marketService.getById(req.params.id);
+  const market = await marketService.getById(req.params.id!);
   if (!market) {
     throw new ApplicationError('Market not found', {
       statusCode: 404,
@@ -282,7 +282,7 @@ export const getMarketHandler = async (req: Request, res: Response) => {
  * GET /api/v1/markets/:id/details
  */
 export const getMarketDetailsHandler = async (req: Request, res: Response) => {
-  const result = await marketService.getMarketWithAsset(req.params.id);
+  const result = await marketService.getMarketWithAsset(req.params.id!);
   if (!result) {
     throw new ApplicationError('Market not found', {
       statusCode: 404,
@@ -299,6 +299,6 @@ export const getMarketDetailsHandler = async (req: Request, res: Response) => {
  * GET /api/v1/markets/:id/events
  */
 export const getMarketEventsHandler = async (req: Request, res: Response) => {
-  const events = await marketService.getEventHistory(req.params.id);
+  const events = await marketService.getEventHistory(req.params.id!);
   res.json({ data: events });
 };

@@ -64,6 +64,15 @@ export interface WithdrawalProcessingJobData {
   withdrawalId: string;
 }
 
+export interface TokenDeploymentJobData {
+  marketId: string;
+  tokenName: string;
+  tokenSymbol: string;
+  decimals: number;
+  totalSupply: string;
+  actorId: string;
+}
+
 export const createMintTokenWorker = (
   handler: (job: Job<MintTokenJobData>) => Promise<void>
 ): Worker => {
@@ -312,6 +321,31 @@ export const createWithdrawalWorker = (
     logger.error(
       { jobId: job?.id, withdrawalId: job?.data?.withdrawalId, error: err },
       'Withdrawal processing failed'
+    );
+  });
+
+  return worker;
+};
+
+export const createTokenDeploymentWorker = (
+  handler: (job: Job<TokenDeploymentJobData>) => Promise<void>
+): Worker => {
+  const worker = new Worker('deploy-token', handler, {
+    connection: createQueueConnection(),
+    concurrency: 2
+  });
+
+  worker.on('completed', (job) => {
+    logger.info(
+      { jobId: job.id, marketId: job.data.marketId, tokenSymbol: job.data.tokenSymbol },
+      'Token deployment completed'
+    );
+  });
+
+  worker.on('failed', (job, err) => {
+    logger.error(
+      { jobId: job?.id, marketId: job?.data?.marketId, error: err },
+      'Token deployment failed'
     );
   });
 

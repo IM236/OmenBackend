@@ -20,6 +20,7 @@ let externalPriceQueue: Queue | null = null;
 let candleAggregationQueue: Queue | null = null;
 let metadataUpdateQueue: Queue | null = null;
 let withdrawalQueue: Queue | null = null;
+let tokenDeploymentQueue: Queue | null = null;
 
 const workers: Worker[] = [];
 
@@ -103,6 +104,11 @@ export const initializeQueues = async (): Promise<void> => {
   });
 
   withdrawalQueue = new Queue('process-withdrawal', {
+    connection: createQueueConnection(),
+    defaultJobOptions: { ...defaultOptions, attempts: 5 }
+  });
+
+  tokenDeploymentQueue = new Queue('deploy-token', {
     connection: createQueueConnection(),
     defaultJobOptions: { ...defaultOptions, attempts: 5 }
   });
@@ -209,6 +215,13 @@ export const getWithdrawalQueue = (): Queue => {
   return withdrawalQueue;
 };
 
+export const getTokenDeploymentQueue = (): Queue => {
+  if (!tokenDeploymentQueue) {
+    throw new Error('Token deployment queue not initialised.');
+  }
+  return tokenDeploymentQueue;
+};
+
 export const shutdownQueues = async (): Promise<void> => {
   const allQueues = [
     transactionQueue,
@@ -223,7 +236,8 @@ export const shutdownQueues = async (): Promise<void> => {
     externalPriceQueue,
     candleAggregationQueue,
     metadataUpdateQueue,
-    withdrawalQueue
+    withdrawalQueue,
+    tokenDeploymentQueue
   ];
 
   const allWorkers = [transactionWorker, ...workers];
@@ -251,5 +265,6 @@ export const shutdownQueues = async (): Promise<void> => {
   candleAggregationQueue = null;
   metadataUpdateQueue = null;
   withdrawalQueue = null;
+  tokenDeploymentQueue = null;
   workers.length = 0;
 };

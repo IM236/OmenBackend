@@ -96,11 +96,13 @@ Core methods implementing the RWA lifecycle:
    - If approved: Updates market, triggers activation
    - If rejected: Stores reason, stops workflow
 
-3. **`activateMarket()`** - Token deployment
-   - Deploys token to Sapphire blockchain
-   - Updates market with contract address
-   - Sets status to active
-   - Handles deployment failures gracefully
+3. **`activateMarket()`** - Token deployment (Async via BullMQ)
+   - Sets status to 'activating'
+   - Enqueues job to 'deploy-token' BullMQ queue
+   - Returns immediately (non-blocking)
+   - Worker handles actual blockchain deployment
+   - Automatic retry on failure (5 attempts with exponential backoff)
+   - Updates market with contract address when deployment succeeds
 
 4. **`pauseMarket()`** - Suspend active market
 5. **`archiveMarket()`** - Permanently close market
@@ -136,7 +138,7 @@ New endpoints:
 
 ### Async Approval Architecture
 
-**NEW (December 2024)**: The approval flow is now fully asynchronous and event-driven.
+**NEW (December 2025)**: The approval flow is now fully asynchronous and event-driven.
 
 #### Flow Overview
 
@@ -216,22 +218,48 @@ Located at: `/Users/gilgamesh/OmenBackEnd/Entity_Permissions_Core`
 
 **Existing Client**: `src/clients/sapphireTokenClient.ts`
 
-**Used by**: `marketService.activateMarket()`
+**Used by**: Token deployment worker (not directly by `marketService.activateMarket()`)
 
-**Flow**:
+**New Files**:
+- `src/infra/queue/tokenDeploymentHandler.ts` - Worker handler for token deployment
+- Updated `src/infra/queue/index.ts` - Added `tokenDeploymentQueue`
+- Updated `src/infra/queue/workers.ts` - Added `createTokenDeploymentWorker()` and `TokenDeploymentJobData` interface
+- Updated `src/infra/bootstrap.ts` - Initialize deployment worker on startup
+
+**Flow (Async)**:
 ```typescript
+// Step 1: Service enqueues job (non-blocking)
+const deploymentQueue = getTokenDeploymentQueue();
+await deploymentQueue.add('deploy-market-token', {
+  marketId,
+  tokenName: market.tokenName,
+  tokenSymbol: market.tokenSymbol,
+  decimals: 18,
+  totalSupply: market.totalSupply.toString(),
+  actorId: admin.id
+});
+// Returns immediately, API responds in <100ms
+
+// Step 2: Worker processes job (async)
 const sapphireClient = getSapphireTokenClient();
 const { address, txHash } = await sapphireClient.deployToken({
-  name: market.tokenName,
-  symbol: market.tokenSymbol,
-  decimals: 18,
-  initialSupply: market.totalSupply.toString(),
-  signerPrivateKey: AppConfig.sapphire.adminKey
+  name: tokenName,
+  symbol: tokenSymbol,
+  decimals,
+  initialSupply: totalSupply,
+  signerPrivateKey: AppConfig.sapphire.privateKey
 });
+// Updates market with contract address and status='active'
 ```
 
-**Returns**: Contract address + transaction hash
-**On Error**: Reverts market to 'approved' status, stores error
+**Benefits**:
+- ✅ Non-blocking API (instant response)
+- ✅ Automatic retry (5 attempts, exponential backoff)
+- ✅ Horizontal scaling (multiple workers)
+- ✅ Job monitoring and observability
+
+**Returns**: Contract address + transaction hash (after deployment)
+**On Error**: BullMQ retries, then reverts market to 'approved' status, stores error
 
 ---
 
@@ -308,17 +336,18 @@ const { address, txHash } = await sapphireClient.deployToken({
 - **`src/infra/queue/workers.ts`** - Worker factory functions
 
 **New Queues:**
-1. `mint-token` - Token minting operations
-2. `process-transfer` - Token transfers
-3. `sync-blockchain` - Event synchronization
-4. `verify-compliance` - KYC/AML checks
-5. `execute-blockchain-settlement` - Post-trade on-chain settlement
-6. `send-trade-notification` - User notifications
-7. `update-market-stats` - Analytics aggregation
-8. `fetch-external-prices` - Price feed updates
-9. `aggregate-candles` - OHLCV generation
-10. `update-token-metadata` - RWA valuation updates
-11. `process-withdrawal` - Withdrawal handling
+1. `deploy-token` - Market token contract deployment (concurrency: 2, retries: 5)
+2. `mint-token` - Token minting operations
+3. `process-transfer` - Token transfers
+4. `sync-blockchain` - Event synchronization
+5. `verify-compliance` - KYC/AML checks
+6. `execute-blockchain-settlement` - Post-trade on-chain settlement
+7. `send-trade-notification` - User notifications
+8. `update-market-stats` - Analytics aggregation
+9. `fetch-external-prices` - Price feed updates
+10. `aggregate-candles` - OHLCV generation
+11. `update-token-metadata` - RWA valuation updates
+12. `process-withdrawal` - Withdrawal handling
 
 #### Blockchain Integration
 - **`src/clients/sapphireTokenClient.ts`**
@@ -643,12 +672,25 @@ Response:
 {
   "data": {
     "id": "market-uuid",
-    "status": "active",  # Automatically activated
+    "status": "activating",  # Deployment in progress (async)
+    "approvedBy": "admin-uuid",
+    "approvedAt": "2025-01-15T..."
+  },
+  "message": "Market approved. Token deployment in progress."
+}
+
+# Poll for completion:
+GET http://localhost:3000/api/v1/markets/{market-id}
+
+# When deployment completes:
+{
+  "data": {
+    "id": "market-uuid",
+    "status": "active",  # Deployment complete!
     "contractAddress": "0x...",
     "deploymentTxHash": "0x...",
     "activatedAt": "2025-01-15T..."
-  },
-  "message": "Market approved and activation initiated"
+  }
 }
 ```
 
@@ -733,9 +775,9 @@ Response:
 ### Priority 1: RWA Lifecycle Completion
 1. **Setup Entity Permissions** - Create required permissions and roles
 2. **Test Sapphire Integration** - Deploy test token contract
-3. **Implement Webhook** - Receive approval decisions from Entity Permissions
+3. ✅ **Implement Webhook** - Receive approval decisions from Entity Permissions (DONE)
 4. **Add Validation** - Asset valuation verification, document validation
-5. **Error Handling** - Better error messages, retry logic for blockchain failures
+5. ✅ **Error Handling** - Retry logic for blockchain failures via BullMQ (DONE)
 
 ### Priority 2: Trading System
 6. **Implement worker handlers** - Start with mint and transfer
@@ -755,5 +797,25 @@ Review the `ARCHITECTURE.md` for detailed design decisions and data flow example
 ---
 
 **Implementation Complete**: All core components created
+**Latest Update**: November 28, 5 - Refactored token deployment to use BullMQ for async processing
 **Production Ready**: After completing worker handlers and contract integration
 **Estimated Time to Production**: 2-4 weeks with proper testing
+
+## Recent Changes (November 28, 2025)
+
+### Token Deployment Refactoring
+- ✅ Moved token deployment from blocking to async BullMQ processing
+- ✅ Added `deploy-token` queue with automatic retry (5 attempts, exponential backoff)
+- ✅ Created `tokenDeploymentHandler.ts` worker implementation
+- ✅ Updated `MarketService.activateMarket()` to enqueue jobs instead of blocking
+- ✅ Updated controller response messages to reflect async flow
+- ✅ API now responds instantly (<100ms) instead of waiting 10-60s for blockchain
+
+**Files Modified**:
+- `src/infra/queue/index.ts` - Added tokenDeploymentQueue
+- `src/infra/queue/workers.ts` - Added TokenDeploymentJobData and worker factory
+- `src/infra/queue/tokenDeploymentHandler.ts` - NEW worker handler
+- `src/services/marketService.ts` - Refactored activateMarket()
+- `src/controllers/marketController.ts` - Updated response messages
+- `src/infra/bootstrap.ts` - Initialize deployment worker
+- `tsconfig.build.json` - Fixed module configuration

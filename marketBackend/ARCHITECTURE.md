@@ -44,7 +44,8 @@ Markets in this platform represent tokenized RWAs (real estate, corporate stock,
 ┌─────────────────────────────────────────────────────────────────┐
 │                      BullMQ Job Queues                           │
 │  - Token Deploy    - Settlement     - Notifications             │
-│  - Approval Sync   - Blockchain Sync- Analytics                 │
+│  - Mint Token      - Transfer       - Blockchain Sync           │
+│  - Compliance      - Analytics      - Price Feeds               │
 └─────────────────────────────────────────────────────────────────┘
          ↓                    ↓                      ↓
 ┌─────────────┬────────────────┬──────────────────┬───────────────┐
@@ -167,26 +168,40 @@ and approval happens through webhooks or polling.
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ Step 5: [ASYNC] Token Deployment to Sapphire                 │
+│ Step 5: [ASYNC] Token Deployment to Sapphire via BullMQ     │
 │ Automatic on approval or manual via POST /:id/activate       │
 │                                                               │
-│ Process:                                                      │
+│ Service Layer (Non-Blocking):                                │
 │ 1. status = 'activating'                                     │
 │ 2. Event: 'market.activation_started'                        │
-│ 3. Call Sapphire: sapphireTokenClient.deployToken()         │
+│ 3. Enqueue job to 'deploy-token' BullMQ queue               │
+│    - Job data: marketId, tokenName, symbol, supply, etc.    │
+│ 4. Return immediately (API responds in <100ms)              │
+│                                                               │
+│ Worker Process (Async):                                      │
+│ 5. Worker picks up job from queue                           │
+│ 6. Call Sapphire: sapphireTokenClient.deployToken()         │
 │    - Deploy ERC-20 contract                                  │
+│    - Wait for transaction confirmation                       │
 │    - Return contractAddress & txHash                         │
-│ 4. Update market:                                            │
+│ 7. Update market in database:                                │
 │    - contractAddress                                         │
 │    - deploymentTxHash                                        │
 │    - status = 'active'                                       │
 │    - activatedAt timestamp                                   │
-│ 5. Event: 'market.activated'                                 │
+│ 8. Event: 'market.activated'                                 │
 │                                                               │
 │ On Failure:                                                  │
-│   - Revert to 'approved' status                             │
+│   - BullMQ retries up to 5 times (exponential backoff)      │
+│   - After final failure: Revert to 'approved' status        │
 │   - Store error in metadata                                  │
-│   - Allow manual retry                                       │
+│   - Allow manual retry via API                               │
+│                                                               │
+│ Benefits:                                                     │
+│   ✓ Non-blocking API (instant response)                     │
+│   ✓ Automatic retry with exponential backoff                │
+│   ✓ Horizontal scaling (multiple workers)                   │
+│   ✓ Job monitoring and observability                        │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
@@ -341,7 +356,7 @@ type AssetType =
 | `/markets/:id/details` | GET | Public | Get market + asset info |
 | `/markets/:id/events` | GET | Public | Get event history |
 
-#### Webhook Endpoints (NEW - December 2024)
+#### Webhook Endpoints (NEW - December 2025)
 
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
@@ -404,6 +419,7 @@ Manages tokenized assets (RWAs and crypto), handles minting, transfers, and comp
 - **sapphireTokenClient.ts**: Blockchain interaction via Sapphire
 
 ### BullMQ Jobs
+- `deploy-token`: **NEW** - Deploy token contracts for market activation (async, retries: 5)
 - `mint-token`: Mint new tokens on-chain (async)
 - `process-transfer`: Execute token transfers
 - `sync-blockchain`: Poll blockchain for events
@@ -590,15 +606,41 @@ COMMIT;
 ## Sapphire Integration
 
 The Sapphire service at `/Users/gilgamesh/OmenBackEnd/Sapphire` is called for:
-- Token contract deployment
+- **Token contract deployment** (via BullMQ `deploy-token` queue)
 - Minting new token supply
 - On-chain transfers (post-trade settlement)
 - Balance verification
 - Event listening (blockchain sync)
 
 ### Integration Points
+
+#### Token Deployment (Async via BullMQ)
 ```typescript
-// Example: Mint tokens on-chain
+// In MarketService.activateMarket() - Enqueue job
+const deploymentQueue = getTokenDeploymentQueue();
+await deploymentQueue.add('deploy-market-token', {
+  marketId,
+  tokenName: market.tokenName,
+  tokenSymbol: market.tokenSymbol,
+  decimals: 18,
+  totalSupply: market.totalSupply.toString(),
+  actorId: admin.id
+});
+
+// In Worker Handler (runs async)
+const sapphireClient = getSapphireTokenClient();
+const deployment = await sapphireClient.deployToken({
+  name: tokenName,
+  symbol: tokenSymbol,
+  decimals,
+  initialSupply: totalSupply,
+  signerPrivateKey: AppConfig.sapphire.privateKey
+});
+// Returns: { address: '0x...', txHash: '0x...' }
+```
+
+#### Token Minting (Example)
+```typescript
 const sapphireClient = getSapphireTokenClient();
 const txHash = await sapphireClient.mintToken({
   tokenAddress: token.contractAddress,
@@ -684,5 +726,5 @@ QUEUE_MAX_RETRY_ATTEMPTS=3
 
 ---
 
-**Implementation Date**: November 2024
-**Last Updated**: November 25, 2024
+**Implementation Date**: November 2025
+**Last Updated**: November 28, 2025 (Added BullMQ-based token deployment)

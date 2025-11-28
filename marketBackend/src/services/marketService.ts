@@ -1,6 +1,4 @@
 import { entityPermissionsClient } from '@clients/entityPermissionsClient';
-import { getSapphireTokenClient } from '@clients/sapphireTokenClient';
-import { AppConfig } from '@config';
 import { marketEventBroker } from '@infra/eventBroker/marketEventBroker';
 import {
   createMarket,
@@ -11,6 +9,7 @@ import {
   activateMarket,
   updateMarketStatus
 } from '@infra/database/repositories/marketRepository';
+import { getTokenDeploymentQueue } from '@infra/queue';
 import {
   createMarketAsset,
   findMarketAssetByMarketId
@@ -252,9 +251,9 @@ export class MarketService {
    *
    * This step:
    * 1. Updates market status to 'activating'
-   * 2. Deploys token contract to Sapphire blockchain
-   * 3. Updates market with contract address
-   * 4. Sets status to 'active'
+   * 2. Enqueues token deployment job to BullMQ
+   * 3. Returns immediately (deployment happens asynchronously)
+   * 4. Worker will update market with contract address and set status to 'active'
    */
   async activateMarket(marketId: string, admin: AdminContext): Promise<Market> {
     const market = await findMarketById(marketId);
@@ -273,7 +272,7 @@ export class MarketService {
     }
 
     // Update to activating status
-    await updateMarketStatus(marketId, 'activating');
+    const activatingMarket = await updateMarketStatus(marketId, 'activating');
 
     // Publish activation started event
     await marketEventBroker.publishEvent({
@@ -287,65 +286,30 @@ export class MarketService {
       }
     });
 
-    logger.info({ marketId }, 'Deploying token contract to Sapphire');
+    logger.info({ marketId }, 'Enqueuing token deployment job');
 
-    try {
-      // Deploy token to Sapphire
-      const sapphireClient = getSapphireTokenClient();
-      const deployment = await sapphireClient.deployToken({
-        name: market.tokenName || market.name,
-        symbol: market.tokenSymbol || 'RWA',
+    // Enqueue deployment job to BullMQ
+    const deploymentQueue = getTokenDeploymentQueue();
+    await deploymentQueue.add(
+      'deploy-market-token',
+      {
+        marketId,
+        tokenName: market.tokenName || market.name,
+        tokenSymbol: market.tokenSymbol || 'RWA',
         decimals: 18,
-        initialSupply: (market.totalSupply || 0).toString(),
-        signerPrivateKey: AppConfig.sapphire.adminKey || ''
-      });
+        totalSupply: (market.totalSupply || 0).toString(),
+        actorId: admin.id
+      },
+      {
+        jobId: `deploy-${marketId}`,
+        removeOnComplete: false,
+        removeOnFail: false
+      }
+    );
 
-      logger.info(
-        {
-          marketId,
-          contractAddress: deployment.address,
-          txHash: deployment.txHash
-        },
-        'Token deployed successfully'
-      );
+    logger.info({ marketId }, 'Token deployment job enqueued successfully');
 
-      // Update market with deployment info and set to active
-      const activatedMarket = await activateMarket(
-        marketId,
-        deployment.address,
-        deployment.txHash
-      );
-
-      // Publish activation completed event
-      await marketEventBroker.publishEvent({
-        marketId,
-        eventType: 'market.activated',
-        actorId: admin.id,
-        actorType: 'system',
-        metadata: {
-          contractAddress: deployment.address,
-          txHash: deployment.txHash
-        }
-      });
-
-      logger.info({ marketId, contractAddress: deployment.address }, 'Market activated');
-
-      return activatedMarket;
-    } catch (error) {
-      logger.error({ error, marketId }, 'Token deployment failed');
-
-      // Revert to approved status on failure
-      await updateMarketStatus(marketId, 'approved', {
-        activationError: String(error),
-        activationAttemptedAt: new Date().toISOString()
-      });
-
-      throw new ApplicationError('Failed to deploy token', {
-        statusCode: 500,
-        code: 'token_deployment_failed',
-        details: { error: String(error) }
-      });
-    }
+    return activatingMarket;
   }
 
   /**
