@@ -4,7 +4,7 @@ import {
 } from '@infra/database/repositories/marketEventRepository';
 import { logger } from '@infra/logging/logger';
 import { ApplicationError } from '@lib/errors';
-import { MarketHistoryEvent } from '@types/market';
+import { MarketHistoryEvent } from '@app-types/market';
 
 export const decryptEventPayload = async (
   event: MarketHistoryEvent

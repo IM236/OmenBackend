@@ -1,5 +1,5 @@
 import { getDatabasePool } from '@infra/database';
-import { Token, UserBalance, ComplianceRecord, CreateTokenInput } from '@types/token';
+import { Token, UserBalance, ComplianceRecord, CreateTokenInput } from '@app-types/token';
 
 export const createToken = async (input: CreateTokenInput): Promise<Token> => {
   const pool = getDatabasePool();

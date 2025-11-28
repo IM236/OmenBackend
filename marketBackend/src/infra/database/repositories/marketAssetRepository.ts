@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDatabasePool } from '@infra/database';
-import { MarketAsset, AssetType } from '@types/market';
+import { MarketAsset, AssetType } from '@app-types/market';
 
 const mapRowToMarketAsset = (row: any): MarketAsset => ({
   id: row.id,

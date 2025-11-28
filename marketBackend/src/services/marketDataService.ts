@@ -6,7 +6,7 @@ import {
   PriceCandle,
   MarketStats,
   Trade
-} from '@types/trading';
+} from '@app-types/trading';
 import {
   findTradingPairById,
   findTradingPairBySymbol,

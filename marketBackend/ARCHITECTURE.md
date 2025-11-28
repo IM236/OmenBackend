@@ -64,7 +64,10 @@ Manages the complete lifecycle of RWA market registration, approval, and activat
 - **entityPermissionsClient.ts**: Integration with approval system
 - **sapphireTokenClient.ts**: Blockchain token deployment
 
-### Market Registration Flow
+### Market Registration Flow (Async Event-Driven)
+
+**IMPORTANT**: This flow is now fully asynchronous. Registration returns immediately,
+and approval happens through webhooks or polling.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -78,32 +81,83 @@ Manages the complete lifecycle of RWA market registration, approval, and activat
 │ - totalSupply: 1000000                                       │
 │ - assetDetails: { valuation, location, compliance docs }     │
 │                                                               │
+│ Process:                                                      │
+│ 1. Check authorization (market.register permission)          │
+│ 2. Create market record (status = 'draft')                   │
+│ 3. Create asset details record                               │
+│ 4. Update status to 'pending_approval'                       │
+│ 5. Publish 'market.registered' event                         │
+│ 6. Publish 'market.approval_requested' event                 │
+│ 7. RETURN IMMEDIATELY ✓                                      │
+│                                                               │
 │ Output: Market created, status = 'pending_approval'          │
-│ Event: 'market.registered' → 'market.approval_requested'     │
+│ Response time: ~100ms (no blocking wait)                     │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ Step 2: Entity Permissions Core Integration                  │
-│ Authorization Check via entityPermissionsClient              │
+│ Step 2: [ASYNC] Admin Reviews in Entity Permissions Core     │
 │                                                               │
-│ Validates:                                                    │
-│ - Issuer has 'market.register' permission                    │
-│ - Entity ID is valid                                         │
-│ - Compliance requirements met                                │
+│ Happens independently - issuer doesn't wait                  │
 │                                                               │
-│ Manual Review: Admin reviews via Entity_Permissions_Core     │
+│ Admin sees:                                                   │
+│ - Market details                                             │
+│ - Asset valuation                                            │
+│ - Compliance documents                                        │
+│ - Issuer credentials                                          │
+│                                                               │
+│ Admin decides: APPROVE or REJECT                             │
+│                                                               │
+│ Time: Minutes to days (human review)                         │
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ Step 3: Approval Decision                                    │
-│ POST /api/v1/markets/:id/approve                             │
+│ Step 3: [ASYNC] Entity Permissions Publishes Event           │
 │                                                               │
-│ Input: { decision: "approve" | "reject", reason }            │
+│ Entity_Permissions_Core publishes to SNS topic:              │
+│ {                                                             │
+│   "event_id": "uuid",                                        │
+│   "event_type": "market.approved" OR "market.rejected",     │
+│   "payload": {                                               │
+│     "market_id": "...",                                      │
+│     "entity_id": "...",                                      │
+│     "decision": "approved" | "rejected",                     │
+│     "reason": "..."                                          │
+│   },                                                          │
+│   "context": { "actor_id": "admin-uuid" }                    │
+│ }                                                             │
+│                                                               │
+│ SNS fans out to:                                             │
+│ - Webhook: POST /api/v1/webhooks/entity-permissions          │
+│ - OR polling picks it up from /api/v1/events API             │
+└──────────────────────────────────────────────────────────────┘
+                            ↓
+┌──────────────────────────────────────────────────────────────┐
+│ Step 4: [ASYNC] Webhook Receives Approval Decision           │
+│ POST /api/v1/webhooks/entity-permissions                     │
+│                                                               │
+│ Process:                                                      │
+│ 1. Check if event already processed (idempotency)           │
+│    → Query processed_events table                            │
+│    → If exists, return 200 (already handled)                 │
+│                                                               │
+│ 2. Validate event structure                                  │
+│    → Parse SNS envelope or direct payload                    │
+│    → Validate required fields                                │
+│                                                               │
+│ 3. Route to approval handler                                 │
+│    → Call marketEventBroker.handleEntityPermissionDecision() │
+│    → Call marketService.processApprovalDecision()            │
+│                                                               │
+│ 4. Record event as processed                                 │
+│    → Insert into processed_events table                      │
+│    → Status: success/failed/skipped                          │
+│                                                               │
+│ 5. Return 200 OK                                             │
 │                                                               │
 │ If APPROVED:                                                 │
 │   - status = 'approved'                                      │
 │   - Event: 'market.approved'                                 │
-│   - Automatically triggers Step 4                            │
+│   - Automatically triggers Step 5 (activation)               │
 │                                                               │
 │ If REJECTED:                                                 │
 │   - status = 'rejected'                                      │
@@ -113,7 +167,7 @@ Manages the complete lifecycle of RWA market registration, approval, and activat
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ Step 4: Token Deployment to Sapphire                         │
+│ Step 5: [ASYNC] Token Deployment to Sapphire                 │
 │ Automatic on approval or manual via POST /:id/activate       │
 │                                                               │
 │ Process:                                                      │
@@ -136,12 +190,39 @@ Manages the complete lifecycle of RWA market registration, approval, and activat
 └──────────────────────────────────────────────────────────────┘
                             ↓
 ┌──────────────────────────────────────────────────────────────┐
-│ Step 5: Market is LIVE                                       │
+│ Step 6: Market is LIVE                                       │
 │ status = 'active'                                            │
 │ Trading operations enabled                                    │
 │ Token minting/transfers available                            │
+│                                                               │
+│ Total time from registration to activation:                  │
+│ - Technical: ~10-30 seconds (token deployment)               │
+│ - Business: Hours to days (human approval)                   │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+### Event Processing Guarantees
+
+**Idempotency**:
+- Every external event has unique `event_id`
+- `processed_events` table prevents duplicate processing
+- Webhook can be called multiple times safely (SNS retries)
+
+**Ordering**:
+- Events may arrive out of order
+- System validates market status before processing
+- Invalid state transitions are rejected with clear errors
+
+**Failure Handling**:
+- Failed event processing recorded in `processed_events`
+- Manual retry via admin endpoint (future enhancement)
+- Monitoring alerts on failed events
+
+**Polling Fallback**:
+- Runs every 10 seconds if enabled
+- Queries `/api/v1/events` endpoint
+- Skips already-processed events
+- Higher latency but no infrastructure dependencies
 
 ### Database Tables (Migration 003_market_rwa_lifecycle.ts)
 
@@ -168,6 +249,17 @@ Manages the complete lifecycle of RWA market registration, approval, and activat
 - `actor_id`, `actor_type`: Who performed the action
 - `decision`, `reason`: Approval/rejection details
 - `metadata`: Additional context
+
+**processed_events** (NEW - Migration 004):
+- Tracks external events for idempotency
+- `event_id`: Unique identifier from external system (Entity Permissions, SNS)
+- `event_type`: Type of event (market.approved, market.rejected, etc.)
+- `source`: Origin system (entity_permissions_core, sapphire, etc.)
+- `payload`: Full event payload as JSONB
+- `context`: Event context (actor, timestamp, etc.)
+- `processing_status`: success | failed | skipped
+- `processing_error`: Error message if processing failed
+- Prevents duplicate processing of webhooks and polled events
 
 ### Event Broker Integration
 
@@ -235,6 +327,8 @@ type AssetType =
 
 ### API Endpoints
 
+#### Market Lifecycle Endpoints
+
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
 | `/markets/register` | POST | Issuer | Register new RWA market |
@@ -246,6 +340,15 @@ type AssetType =
 | `/markets/:id` | GET | Public | Get market details |
 | `/markets/:id/details` | GET | Public | Get market + asset info |
 | `/markets/:id/events` | GET | Public | Get event history |
+
+#### Webhook Endpoints (NEW - December 2024)
+
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/webhooks/health` | GET | None | Health check for webhook service |
+| `/webhooks/entity-permissions` | POST | None* | Receive approval events from Entity Permissions Core |
+
+*Webhook signature validation happens inside handler (not middleware)
 
 ### Market States
 

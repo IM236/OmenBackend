@@ -7,7 +7,7 @@ import {
   MintTokenInput,
   TransferTokenInput,
   CreateTokenInput
-} from '@types/token';
+} from '@app-types/token';
 import {
   createToken,
   findTokenById,

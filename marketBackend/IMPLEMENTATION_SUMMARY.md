@@ -134,6 +134,60 @@ New endpoints:
 
 ### Integration Points
 
+### Async Approval Architecture
+
+**NEW (December 2024)**: The approval flow is now fully asynchronous and event-driven.
+
+#### Flow Overview
+
+```
+1. Issuer registers market
+   ↓
+2. Market saved with status='pending_approval'
+   ↓
+3. Event 'market.approval_requested' published
+   ↓
+4. Response returned immediately to client ✓
+   ↓
+5. [ASYNC] Admin reviews in Entity Permissions Core
+   ↓
+6. [ASYNC] Entity Permissions publishes 'market.approved' or 'market.rejected'
+   ↓
+7. [ASYNC] Webhook receives event at /api/v1/webhooks/entity-permissions
+   ↓
+8. [ASYNC] Market status updated and activation triggered if approved
+```
+
+#### Integration Methods
+
+**Method 1: Webhooks (Recommended for Production)**
+- Entity Permissions Core publishes events to SNS
+- SNS delivers to webhook endpoint: `POST /api/v1/webhooks/entity-permissions`
+- Idempotency guaranteed via `processed_events` table
+- Real-time processing (< 1 second latency)
+
+**Method 2: API Polling (Fallback/Development)**
+- `MarketEventListener` polls `/api/v1/events` endpoint every 10 seconds
+- Fetches unprocessed approval/rejection events
+- Records in `processed_events` to prevent duplicates
+- Higher latency (~10 seconds) but no infrastructure setup needed
+
+#### New Database Tables
+
+**processed_events**:
+- Tracks all external events received (webhooks or polls)
+- Ensures idempotency - same event won't be processed twice
+- Stores processing status (success/failed/skipped)
+- Used for audit trail and debugging
+
+#### New Files Created
+
+- `src/controllers/webhookController.ts` - Webhook handlers
+- `src/routes/webhookRouter.ts` - Webhook routes
+- `src/infra/database/migrations/004_processed_events_tracking.ts` - Migration
+- `src/infra/database/repositories/processedEventRepository.ts` - Event tracking
+- Enhanced `src/services/eventListenerService.ts` - Polling implementation
+
 #### Entity Permissions Core
 
 Located at: `/Users/gilgamesh/OmenBackEnd/Entity_Permissions_Core`
@@ -151,9 +205,12 @@ Located at: `/Users/gilgamesh/OmenBackEnd/Entity_Permissions_Core`
 - `market.pause` - Admin
 - `market.archive` - Admin
 
-**TODO for Production**:
-- Implement webhook endpoint to receive approval decisions from Entity Permissions
-- Call `marketEventBroker.handleEntityPermissionDecision()` on webhook
+**✅ IMPLEMENTED**:
+- ✅ Webhook endpoint at `/api/v1/webhooks/entity-permissions` receives approval decisions
+- ✅ Idempotency via `processed_events` table prevents duplicate processing
+- ✅ Fallback polling mechanism in `eventListenerService.ts` (polls every 10s)
+- ✅ Calls `marketEventBroker.handleEntityPermissionDecision()` on webhook receipt
+- ✅ Non-blocking approval flow - `registerMarket()` returns immediately
 
 #### Sapphire Blockchain Integration
 
@@ -655,13 +712,21 @@ Response:
   - Configure RPC URL and admin private key
   - Test token deployment manually first
 
-- [ ] **Event Broker**:
-  - Implement webhook endpoint to receive approval decisions
-  - Call `marketEventBroker.handleEntityPermissionDecision()`
+- [✅] **Event Broker** (COMPLETED):
+  - ✅ Webhook endpoint implemented at `/api/v1/webhooks/entity-permissions`
+  - ✅ Calls `marketEventBroker.handleEntityPermissionDecision()`
+  - ✅ Idempotency via `processed_events` table
+  - ✅ Polling fallback mechanism implemented
+
+- [ ] **Webhook Configuration** (Production):
+  - Subscribe SNS topic to webhook URL: `https://your-domain.com/api/v1/webhooks/entity-permissions`
+  - OR configure Entity Permissions Core to POST directly to webhook
+  - OR enable polling by setting `PERMISSIONS_SERVICE_BASE_URL` in `.env`
 
 - [ ] **Mock Testing**:
   - You can mock Sapphire by temporarily modifying `sapphireTokenClient.ts`
   - Return fake contract address for testing
+  - Test webhook with curl: `curl -X POST http://localhost:3000/api/v1/webhooks/entity-permissions -H "Content-Type: application/json" -d '{"event_id":"test-123","event_type":"market.approved","payload":{"market_id":"..."},"context":{}}'`
 
 ## Next Steps
 

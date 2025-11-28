@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import { getDatabasePool } from '@infra/database';
-import { TransactionRecord, TransactionStatus } from '@types/transaction';
+import { TransactionRecord, TransactionStatus } from '@app-types/transaction';
 
 interface CreateTransactionInput {
   marketId: string;

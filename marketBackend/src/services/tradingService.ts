@@ -9,7 +9,7 @@ import {
   OrderBook,
   OrderBookEntry,
   MarketStats
-} from '@types/trading';
+} from '@app-types/trading';
 import {
   createOrder,
   updateOrderStatus,

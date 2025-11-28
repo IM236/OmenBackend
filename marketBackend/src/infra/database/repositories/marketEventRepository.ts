@@ -1,7 +1,7 @@
 import { randomUUID } from 'crypto';
 
 import { getDatabasePool } from '@infra/database';
-import { MarketHistoryEvent } from '@types/market';
+import { MarketHistoryEvent } from '@app-types/market';
 
 const mapRowToEvent = (row: any): MarketHistoryEvent => ({
   id: row.id,

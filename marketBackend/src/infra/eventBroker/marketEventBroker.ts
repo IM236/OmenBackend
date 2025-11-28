@@ -1,6 +1,6 @@
 import EventEmitter from 'events';
 import { logger } from '@infra/logging/logger';
-import { MarketApprovalEvent, MarketApprovalEventType } from '@types/market';
+import { MarketApprovalEvent, MarketApprovalEventType } from '@app-types/market';
 import {
   createMarketApprovalEvent,
   listMarketApprovalEvents

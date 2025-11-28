@@ -7,7 +7,7 @@ import {
   CreateOrderInput,
   MarketStats,
   PriceCandle
-} from '@types/trading';
+} from '@app-types/trading';
 
 export const findTradingPairById = async (pairId: string): Promise<TradingPair | null> => {
   const pool = getDatabasePool();

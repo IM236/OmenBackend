@@ -16,7 +16,7 @@ import {
 import { logger } from '@infra/logging/logger';
 import { encryptCalldata } from '@lib/encryption/encryptedCalldata';
 import { ApplicationError } from '@lib/errors';
-import { TransactionJobPayload, TransactionRecord } from '@types/transaction';
+import { TransactionJobPayload, TransactionRecord } from '@app-types/transaction';
 
 type WorkerJob = Job<TransactionJobPayload>;
 

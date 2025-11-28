@@ -23,8 +23,8 @@ import {
   MarketListResponse,
   MarketAsset,
   AssetType
-} from '@types/market';
-import { AdminContext } from '@types/auth';
+} from '@app-types/market';
+import { AdminContext } from '@app-types/auth';
 
 export interface RegisterMarketInput {
   name: string;
@@ -122,9 +122,10 @@ export class MarketService {
       }
     });
 
-    // Immediately request approval
+    // Request approval (non-blocking - just updates status and publishes event)
     await this.requestApproval(market.id, input.entityId, admin);
 
+    // Return immediately - approval will happen asynchronously
     return { market, asset };
   }
 

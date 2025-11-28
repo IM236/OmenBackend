@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { MarketService } from '@services/marketService';
 import { ApplicationError } from '@lib/errors';
-import { AssetType } from '@types/market';
+import { AssetType } from '@app-types/market';
 
 /**
  * Market Controller - RWA Registration & Lifecycle
@@ -131,7 +131,7 @@ export const approveMarketHandler = async (req: Request, res: Response) => {
 
   const market = await marketService.processApprovalDecision(
     {
-      marketId: req.params.id,
+      marketId: req.params.id!,
       decision,
       reason: req.body.reason,
       entityId: req.body.entityId

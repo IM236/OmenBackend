@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { getDatabasePool } from '@infra/database';
-import { MarketApprovalEvent, MarketApprovalEventType } from '@types/market';
+import { MarketApprovalEvent, MarketApprovalEventType } from '@app-types/market';
 
 const mapRowToEvent = (row: any): MarketApprovalEvent => ({
   id: row.id,
