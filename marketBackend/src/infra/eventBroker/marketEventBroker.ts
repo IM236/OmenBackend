@@ -112,7 +112,10 @@ export class MarketEventBroker extends EventEmitter {
    */
   async getLatestEvent(marketId: string): Promise<MarketApprovalEvent | null> {
     const events = await this.getMarketEventHistory(marketId);
-    return events.length > 0 ? events[0] : null;
+    if (events.length === 0) {
+      return null;
+    }
+    return events[0] ?? null;
   }
 
   private setupEventHandlers(): void {

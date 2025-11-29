@@ -1,4 +1,5 @@
-import { getPool } from '../pool';
+import { getDatabasePool } from '@infra/database';
+
 
 export interface ProcessedEvent {
   id: string;
@@ -29,7 +30,7 @@ export interface CreateProcessedEventInput {
  * @returns true if event exists in processed_events table
  */
 export async function isEventProcessed(eventId: string): Promise<boolean> {
-  const pool = getPool();
+  const pool = getDatabasePool();
   const result = await pool.query(
     `SELECT 1 FROM processed_events WHERE event_id = $1 LIMIT 1`,
     [eventId]
@@ -48,7 +49,7 @@ export async function isEventProcessed(eventId: string): Promise<boolean> {
 export async function recordProcessedEvent(
   input: CreateProcessedEventInput
 ): Promise<ProcessedEvent> {
-  const pool = getPool();
+  const pool = getDatabasePool();
 
   // Use INSERT ... ON CONFLICT to ensure idempotency
   const result = await pool.query(
@@ -97,7 +98,7 @@ export async function recordProcessedEvent(
  * Get a processed event by ID
  */
 export async function findProcessedEventById(eventId: string): Promise<ProcessedEvent | null> {
-  const pool = getPool();
+  const pool = getDatabasePool();
   const result = await pool.query(`SELECT * FROM processed_events WHERE event_id = $1`, [eventId]);
 
   if (result.rows.length === 0) {
@@ -128,7 +129,7 @@ export async function listProcessedEvents(params: {
   limit?: number;
   offset?: number;
 }): Promise<ProcessedEvent[]> {
-  const pool = getPool();
+  const pool = getDatabasePool();
 
   const conditions: string[] = [];
   const values: any[] = [];
@@ -164,7 +165,7 @@ export async function listProcessedEvents(params: {
 
   const result = await pool.query(query, values);
 
-  return result.rows.map((row) => ({
+  return result.rows.map((row: { id: any; event_id: any; event_type: any; source: any; payload: any; context: any; processed_at: any; processing_status: any; processing_error: any; }) => ({
     id: row.id,
     eventId: row.event_id,
     eventType: row.event_type,
@@ -183,7 +184,7 @@ export async function listProcessedEvents(params: {
 export async function getFailedEventsCount(
   since?: Date
 ): Promise<{ count: number; oldestFailure: Date | null }> {
-  const pool = getPool();
+  const pool = getDatabasePool();
 
   const sinceClause = since ? `AND processed_at >= $1` : '';
   const values = since ? [since] : [];
@@ -212,7 +213,7 @@ export async function getFailedEventsCount(
  * @returns Number of deleted records
  */
 export async function deleteOldProcessedEvents(olderThan: Date): Promise<number> {
-  const pool = getPool();
+  const pool = getDatabasePool();
 
   const result = await pool.query(
     `

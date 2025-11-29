@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc --project tsconfig.build.json",
+    "build": "tsup",
     "dev": "tsx watch --tsconfig tsconfig.dev.json src/server.ts",
     "start": "node dist/server.js",
     "lint": "tsc --noEmit",
