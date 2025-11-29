@@ -1,123 +1,139 @@
-# Market Backend (Skeleton)
+# Market Backend
 
-Express + TypeScript skeleton for the Omen market management service. The codebase establishes the core layering, infrastructure wiring, and placeholders for Sapphire transactions so feature work can begin immediately.
+Backend service for issuing tokenized real-world asset (RWA) markets, managing approval workflows, deploying Sapphire ERC-20 tokens, and operating a secondary trading venue. The codebase wraps a production-style Express + TypeScript stack with layered services, event-driven integrations, and BullMQ powered background workers.
 
-## Key Capabilities
+## Core Capabilities
+- **RWA lifecycle orchestration** – issuer registration, compliance approvals, async token deployment, activation, pause/archive flows.
+- **Entity Permissions Core integration** – RBAC enforcement, webhook/polling approval decisions, audit trail persistence.
+- **Sapphire blockchain connectivity** – confidential signer bootstrap, rate-limited RPC, token deployment & transaction queueing.
+- **Trading & settlement engine** – signature-verified orders, in-memory matching, ACID trade settlement, analytics feeds.
+- **Token & balance management** – mint/transfer queues, compliance gating, balance locking, wrapping/unwrapping into USDC.
+- **Operational guardrails** – structured logging, correlation IDs, rate limiting, Zod validation, graceful shutdown.
 
-- Strict TypeScript configuration with path aliases
-- Layered architecture (`controllers → services → clients → infra`)
-- PostgreSQL connection pooling with migration harness
-- Redis connectivity + BullMQ queues (transaction & DLQ)
-- Sapphire SDK bootstrap with confidential signer placeholders
-- Rate-limited Sapphire RPC client with retry/backoff
-- Transaction Manager scaffolding (pending/in_progress/confirmed/failed/dropped)
-- Event listener skeleton for Sapphire market registry events
-- Structured logging (Pino) with correlation IDs
-- Zod-backed request validation and admin auth middleware
-- Vitest test harness with unit & integration test stubs
+## Architecture at a Glance
+- **Layered Express app** (`controllers → services → infra/clients`) with dependency factories and shared types.
+- **Persistence** – PostgreSQL (markets, trading, audit, processed events) and Redis (caching, BullMQ job store).
+- **Event broker** – `marketEventBroker` persists lifecycle events and emits hooks for approvals/activations.
+- **Approval flow** – asynchronous via `/api/v1/webhooks/entity-permissions` or polling Entity Permissions Core every 10s; idempotency guaranteed by `processed_events`.
+- **Background workers** – initialized during bootstrap for token deployment, settlement, reconciliation, transaction processing, and order matching.
+- **Documentation** – deeper specs in `ARCHITECTURE.md`, `IMPLEMENTATION_SUMMARY.md`, `ASYNC_APPROVAL_IMPLEMENTATION.md`, and `TRADING_SYSTEM_IMPLEMENTATION.md`.
 
-## Directory Layout
+## RWA Lifecycle Workflow
+1. **Register** – `POST /api/v1/markets/register` (issuer role) creates market + asset records, publishes `market.registered`.
+2. **Approval requested** – service updates status to `pending_approval` and emits `market.approval_requested`.
+3. **Decision intake** – Entity Permissions Core posts to webhook or is polled; `market.approved` or `market.rejected` recorded with full audit trail.
+4. **Async activation** – approvals enqueue BullMQ `deploy-token` jobs; worker deploys Sapphire ERC-20, updates contract details, emits `market.activated`.
+5. **Operations** – admins may pause, archive, or re-trigger activation; `/markets/:id/events` exposes chronological lifecycle history.
 
+## Trading & Tokenization Workflows
+- **Order submission** – signed orders validated via EIP-712, nonce tracking, and compliance checks before enqueueing `order-matching` jobs.
+- **Matching & settlement** – matching worker prioritizes market orders, records trades, locks/unlocks balances, and hands off to `execute-blockchain-settlement`.
+- **Token service** – CRUD, minting, transfers, compliance updates, and caching; BullMQ queues (`mint-token`, `process-transfer`, `process-withdrawal`, etc.) handle side effects.
+- **Wrapper service** – wrap/unwrap RWA tokens into USDC with queued processing and cached quotes.
+
+## API Surface
+| Domain | Method & Route | Purpose |
+| --- | --- | --- |
+| Markets | `POST /markets/register` | Register RWA market |
+|  | `POST /markets/:id/approve` | Approve or reject (admin) |
+|  | `POST /markets/:id/activate` | Trigger token deployment |
+|  | `POST /markets/:id/pause` / `archive` | Operational controls |
+|  | `GET /markets` / `:id` / `:id/details` | Market queries |
+|  | `GET /markets/:id/events` | Lifecycle audit trail |
+| Webhooks | `POST /webhooks/entity-permissions` | Ingest approval decisions |
+| Trading | `POST /trading/orders` | Submit signed order |
+|  | `DELETE /trading/orders/:orderId` | Cancel order |
+|  | `GET /trading/orders/:orderId` | Order detail |
+|  | `GET /trading/users/:userId/orders` | User order history |
+|  | `GET /trading/pairs` / `:pairId/orderbook` / `:pairId/stats` | Market data |
+| Tokens | `POST /tokens` / `GET /tokens` | Manage token metadata |
+|  | `POST /tokens/:tokenId/mint` / `transfer` | Blockchain-side ops |
+| Wrapper | `POST /wrapper/quotes` / `wrap` / `unwrap` | Wrap/unwrap orchestration |
+| Health | `GET /health` | Liveness & readiness (via `healthRouter`) |
+
+## Background Queues & Workers
+- `deploy-token` – Sapphire ERC-20 deployment for approved markets.
+- `market-tx-queue` & DLQ – Sapphire transaction submission + retry management.
+- `order-matching` – In-memory order matching orchestrator with priority handling.
+- `execute-blockchain-settlement`, `blockchain-reconciliation` – Post-trade settlement & ledger sync.
+- `mint-token`, `process-transfer`, `process-withdrawal` – Token lifecycle operations.
+- `verify-compliance`, `send-trade-notification`, `update-market-stats`, `fetch-external-prices`, `aggregate-candles`, `update-token-metadata` – Supporting compliance, comms, and analytics.
+- Workers boot during `bootstrapInfrastructure` and share Redis-backed BullMQ connections; concurrency is configured via env.
+
+## Project Layout
 ```
-marketBackend/
-├── src/
-│   ├── app.ts                   # Express wiring & middleware
-│   ├── server.ts                # Service bootstrap + graceful shutdown
-│   ├── config/                  # Zod env parsing + typed config
-│   ├── controllers/             # HTTP controllers
-│   ├── services/                # Domain services (market, tx manager, events, gas)
-│   ├── clients/                 # External service/Sapphire clients
-│   ├── infra/                   # Database, Redis, queues, logging, Sapphire bootstrap
-│   ├── middlewares/             # Correlation IDs, auth, rate limiting, validation, errors
-│   ├── routes/                  # Express routers
-│   ├── lib/                     # Cross-cutting helpers (async handler, errors, rate limiter)
-│   ├── types/                   # Shared type declarations
-│   └── tests/                   # Vitest unit + integration scaffolds
-├── tsconfig.json                # Strict TS config with path aliases
-├── tsconfig.build.json          # Build-only config (emit to dist/)
-├── vitest.config.ts             # Testing config
-└── .env.example                 # Reference environment variables
+src/
+├── app.ts                     # Express wiring & middleware registration
+├── server.ts                  # Bootstrap + graceful shutdown
+├── clients/                   # External APIs (Entity Permissions, Sapphire, etc.)
+├── config/                    # Zod-validated environment configuration
+├── controllers/               # HTTP handlers (markets, trading, tokens, wrapper, webhooks)
+├── infra/
+│   ├── database/              # Knex/pg setup, migrations, repositories
+│   ├── eventBroker/           # Market lifecycle broker
+│   ├── queue/                 # BullMQ queues + workers
+│   ├── redis/                 # Redis bootstrap
+│   ├── sapphire/              # Sapphire RPC + signer bootstrap
+│   └── events/                # Polling listeners (Entity Permissions, Sapphire)
+├── lib/                       # Cross-cutting helpers (async handler, errors, cache, signatures)
+├── middlewares/               # Auth, validation, correlation IDs, rate limiting, errors
+├── routes/                    # Express routers per domain
+├── services/                  # Business logic (market, trading, token, wrapper, settlement, etc.)
+├── tests/                     # Vitest scaffolding for unit/integration tests
+└── types/                     # Shared domain typings (market, trading, token, wrapper, auth)
 ```
 
 ## Getting Started
-
-1. **Install dependencies**
+1. **Prerequisites** – Node 18.18+, PostgreSQL 14+, Redis 6+, and access to a Sapphire RPC endpoint (or mocked client).
+2. **Install dependencies**
    ```bash
-   cd marketBackend
    npm install
    ```
-
-2. **Copy `.env.example` to `.env`** and fill in:
-   - Postgres connection (`DATABASE_URL`)
-   - Redis endpoint (`REDIS_URL`)
-   - Entity Permissions Core endpoint + API key
-   - Sapphire RPC endpoint, chain id, and confidential signer credentials (mnemonic or private key)
-   - Admin auth secret (`ADMIN_API_KEY` or `ADMIN_JWT_PUBLIC_KEY`)
-
-3. **Run database migrations**
+3. **Configure environment** – copy `.env.example` to `.env` and fill in database, Redis, Entity Permissions, and Sapphire credentials (mnemonic or confidential signer key). Either `ADMIN_API_KEY` or `ADMIN_JWT_PUBLIC_KEY` is required for admin auth.
+4. **Run database migrations**
    ```bash
    npm run migrate
    ```
-
-4. **Start the development server**
+5. **Start the service**
    ```bash
-   npm run dev
+   npm run dev      # hot reload with tsx
+   # or
+   npm run build && npm start
    ```
+   The bootstrap process initialises DB, Redis, queues, Sapphire client, event listeners, and background workers before exposing HTTP on `PORT`.
 
-5. **Execute tests**
-   ```bash
-   npm run test
-   # or focus on future integration tests
-   npm run test:integration
-   ```
+## Configuration
+Key environment variables (see `.env.example` for full list):
 
-## Infrastructure Overview
+| Variable | Description |
+| --- | --- |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `REDIS_URL` | Redis connection for BullMQ + caching |
+| `ENTITY_PERMISSIONS_BASE_URL` / `ENTITY_PERMISSIONS_API_KEY` | Entity Permissions Core endpoint & auth |
+| `SAPPHIRE_RPC_URL`, `SAPPHIRE_CHAIN_ID` | Sapphire network configuration |
+| `OASIS_WALLET_MNEMONIC` \| `CONFIDENTIAL_SIGNER_PRIVATE_KEY` | Confidential signer for Sapphire transactions |
+| `TRANSACTION_QUEUE_NAME`, `DLQ_QUEUE_NAME` | Primary BullMQ queue names |
+| `MAX_RETRY_ATTEMPTS`, `RETRY_BACKOFF_MS`, `WORKER_CONCURRENCY` | Queue retry tuning |
+| `ADMIN_API_KEY` \| `ADMIN_JWT_PUBLIC_KEY` | Admin authentication mechanism |
+| `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS` | API rate limiting window |
+| `ENABLE_WEBSOCKETS` | Toggle for future realtime transports |
 
-| Component          | Responsibility                                                                  |
-|--------------------|----------------------------------------------------------------------------------|
-| PostgreSQL         | Persists markets, transaction lifecycle (`transactions`), `market_events` ledger |
-| Redis              | Backing store for BullMQ queues and future caching                               |
-| BullMQ             | Manages Sapphire transaction queue + DLQ with exponential backoff                |
-| Sapphire Provider  | Bootstraps confidential client & signer (Oasis SDK stubs)                        |
-| Entity Permissions | Authorization guard via `/api/v1/authorize` for admin flows                     |
-| Pino               | Structured logging with correlation IDs                                          |
+## Scripts
+- `npm run dev` – Start development server with hot reload.
+- `npm run build` – Compile TypeScript to `dist/`.
+- `npm start` – Run compiled server.
+- `npm run migrate` – Execute database migrations.
+- `npm run test` / `npm run test:integration` – Execute Vitest suites (currently scaffolded).
+- `npm run lint` – Type-check via `tsc --noEmit`.
 
-## Entity Permissions Core Integration
+## Testing & Observability
+- Logging via Pino + correlation IDs; configurable log level with `LOG_LEVEL`.
+- Vitest suites (`src/tests`) contain unit/integration scaffolds with TODO markers for high-priority coverage.
+- Queue & worker metrics can be inspected via BullMQ events/logging; reconciliation jobs log progress in `marketEventBroker`.
 
-The service depends on the existing Entity Permissions Core (EPR) for access control:
+## Further Reading
+- `ARCHITECTURE.md` – System diagrams, lifecycle detail, integration contracts.
+- `IMPLEMENTATION_SUMMARY.md` – End-to-end feature breakdown, outstanding work, API checklists.
+- `ASYNC_APPROVAL_IMPLEMENTATION.md` – Deep dive on new approval pipeline.
+- `TRADING_SYSTEM_IMPLEMENTATION.md` / `RWA_TRADING_INTEGRATION.md` – Trading and RWA/token integration specifics.
 
-- **Authorization Flow**: `controllers/marketController` delegates to `MarketService`, which calls `EntityPermissionsClient.authorize`. This POSTs to `EPR /api/v1/authorize` with the acting admin, `entity_id`, and action (e.g. `market.register`, `market.approve`). Denials bubble up as HTTP 403.
-- **Roles & Role Assignments**: Ensure the EPR schema (`database_schema.sql`) contains roles and permissions that cover the new actions. Recommended additions:
-  - `permissions.action`: `market.register`, `market.approve`, `market.reject`, `market.pause`, `market.activate`
-  - `roles`: Create administrative roles with appropriate `scope_types` (`['issuer', 'offering']` etc.)
-  - `role_assignments`: Grant roles to admin principals managing the markets you create here.
-- **Audit & Platform Events**: EPR already writes audit logs (`audit_logs`) and `platform_events`. When this service performs admin actions it logs them via Pino. You can forward these logs or hook into EPR's audit pipeline by POSTing to `/api/v1/events` if a cross-service audit is required.
-- **Service Authentication**: Configure `ENTITY_PERMISSIONS_API_KEY` to match the API gateway/API key configured for this microservice in EPR. Alternatively, wire mutual-auth via private networking.
-- **Future Cross-Service Calls**: Market lifecycle events can be propagated back into EPR using its `/api/v1/events` ingestion API (see EPR README). The `eventProcessingService` skeleton highlights where to publish follow-up events once Sapphire state changes are confirmed.
-
-> **Tip:** Coordinate entity identifiers between systems. `markets.owner_id` should correspond to `entities.id` in EPR to align RBAC scopes.
-
-## Sapphire Transaction Pipeline (Skeleton)
-
-1. Controllers queue admin actions through `MarketService`.
-2. `MarketService.enqueueTransaction` estimates gas (with ceiling guard), builds encrypted calldata (stub), and pushes a job onto the BullMQ queue.
-3. `TransactionManager` workers process jobs, calling the Sapphire RPC client and updating the `transactions` table.
-4. Failed jobs retry with exponential backoff. Terminal failures drop into the DLQ and trigger an alert hook placeholder.
-5. `MarketEventListener` (polling stub) will ingest Sapphire registry events, call `eventProcessingService`, and persist `market_events` records to provide GET `/markets/:id/history`.
-
-## Validation & Auth
-
-- `middlewares/requestValidation` uses Zod to enforce request schemas.
-- `middlewares/adminAuth` accepts either an `x-api-key` header or a Bearer JWT (validated with the configured public key). Required roles are enforced per-route.
-- `middlewares/rateLimiter` applies configurable rate limits across all `/api/v1` endpoints.
-- `middlewares/errorHandler` standardises error responses and surfaces validation issues cleanly.
-
-## Next Steps
-
-- Implement the actual Sapphire SDK calls in `lib/encryption/encryptedCalldata.ts` and `services/transactionManager.ts`.
-- Replace event polling stubs with live WebSocket subscriptions or RPC filters.
-- Complete unit/integration tests (Vitest `it.todo` markers indicate high-priority coverage areas).
-- Wire DLQ notifications into your alerting stack (PagerDuty, Slack, etc.).
-- Extend `eventProcessingService` to update `markets` table status transitions based on on-chain state changes.
-
-This scaffold is intentionally lightweight while covering all required integration points so teams can focus on domain-specific logic. Let me know if you need deeper implementation help for any section.
