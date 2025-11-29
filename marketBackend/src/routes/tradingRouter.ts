@@ -17,10 +17,6 @@ import {
 
 const tradingRouter = Router();
 
-tradingRouter.get('/pairs', asyncHandler(getTradingPairsHandler));
-
-tradingRouter.get('/pairs/:pairId', asyncHandler(getTradingPairHandler));
-
 tradingRouter.post('/orders', asyncHandler(submitOrderHandler));
 
 tradingRouter.delete('/orders/:orderId', asyncHandler(cancelOrderHandler));
@@ -30,6 +26,10 @@ tradingRouter.get('/orders/:orderId', asyncHandler(getOrderHandler));
 tradingRouter.get('/users/:userId/orders', asyncHandler(getUserOrdersHandler));
 
 tradingRouter.get('/users/:userId/trades', asyncHandler(getUserTradesHandler));
+
+tradingRouter.get('/pairs', asyncHandler(getTradingPairsHandler));
+
+tradingRouter.get('/pairs/:pairId', asyncHandler(getTradingPairHandler));
 
 tradingRouter.get('/pairs/:pairId/orderbook', asyncHandler(getOrderBookHandler));
 

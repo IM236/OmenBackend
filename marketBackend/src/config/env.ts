@@ -35,6 +35,7 @@ const EnvironmentSchema = z
     DLQ_QUEUE_NAME: z.string().default('market-tx-dlq'),
     MAX_RETRY_ATTEMPTS: z.coerce.number().default(5),
     RETRY_BACKOFF_MS: z.coerce.number().default(2_000),
+    WORKER_CONCURRENCY: z.coerce.number().default(5),
     ADMIN_API_KEY: z.string().optional(),
     ADMIN_JWT_PUBLIC_KEY: z.string().optional(),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60_000),
@@ -111,7 +112,8 @@ export const AppConfig = {
     transactionQueue: env.TRANSACTION_QUEUE_NAME,
     deadLetterQueue: env.DLQ_QUEUE_NAME,
     maxRetryAttempts: env.MAX_RETRY_ATTEMPTS,
-    retryBackoffMs: env.RETRY_BACKOFF_MS
+    retryBackoffMs: env.RETRY_BACKOFF_MS,
+    workerConcurrency: env.WORKER_CONCURRENCY
   },
   auth: {
     adminApiKey: env.ADMIN_API_KEY,

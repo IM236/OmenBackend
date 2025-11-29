@@ -22,19 +22,53 @@ import {
   upsertMarketStats,
   getMarketStats
 } from '@infra/database/repositories/tradingRepository';
+import { findMarketById } from '@infra/database/repositories/marketRepository';
+import { findTokenById } from '@infra/database/repositories/tokenRepository';
 import { TokenService } from './tokenService';
 import { Queue } from 'bullmq';
 import { getDatabasePool } from '@infra/database';
+import { EIP712Verifier, OrderSignatureData } from '@lib/signature/eip712';
+import { nonceService } from '@lib/signature/nonceService';
+import { tradingEventPublisher } from '@lib/events/tradingEventPublisher';
 
 export class TradingService {
   constructor(
     private readonly tokenService: TokenService,
     private readonly settlementQueue: Queue,
     private readonly notificationQueue: Queue,
-    private readonly analyticsQueue: Queue
+    private readonly analyticsQueue: Queue,
+    private readonly matchingQueue: Queue,
+    private readonly eip712Verifier: EIP712Verifier
   ) {}
 
   async submitOrder(input: CreateOrderInput): Promise<Order> {
+    this.eip712Verifier.validateExpiry(input.expiry);
+
+    await nonceService.validateAndConsumeNonce(input.userAddress, input.nonce);
+
+    const signatureData: OrderSignatureData = {
+      marketId: input.tradingPairId,
+      side: input.side,
+      orderKind: input.orderType,
+      quantity: input.quantity,
+      price: input.price || null,
+      nonce: input.nonce,
+      expiry: input.expiry
+    };
+
+    const isValid = await this.eip712Verifier.verifyOrderSignature(
+      signatureData,
+      input.signature,
+      input.userAddress
+    );
+
+    if (!isValid) {
+      throw new ApplicationError('Invalid signature', {
+        statusCode: 401,
+        code: 'invalid_signature'
+      });
+    }
+
     const pair = await findTradingPairById(input.tradingPairId);
     if (!pair) {
       throw new ApplicationError('Trading pair not found', {
@@ -50,10 +84,16 @@ export class TradingService {
       });
     }
 
+    // Check if this is an RWA market and apply compliance
+    if (pair.marketId) {
+      await this.validateRwaCompliance(pair.marketId, input.userId, pair);
+    }
+
     await this.validateOrderSize(pair, input.quantity);
 
-    if (input.orderType === 'LIMIT' && !input.price) {
-      throw new ApplicationError('Price is required for limit orders', {
+    const priceRequiredOrderTypes: Order['orderType'][] = ['LIMIT', 'STOP_LIMIT'];
+    if (priceRequiredOrderTypes.includes(input.orderType) && !input.price) {
+      throw new ApplicationError('Price is required for limit and stop-limit orders', {
         statusCode: 400,
         code: 'price_required'
       });
@@ -66,7 +106,12 @@ export class TradingService {
 
     await this.tokenService.lockBalanceForOrder(input.userId, tokenToLock, amountToLock);
 
-    const order = await createOrder(input);
+    // Create order with PENDING_MATCH status
+    const orderInput = {
+      ...input,
+      status: 'PENDING_MATCH' as const
+    };
+    const order = await createOrder(orderInput);
 
     await insertAuditLog({
       userId: input.userId,
@@ -79,11 +124,29 @@ export class TradingService {
 
     await this.cacheUserOrder(order);
 
-    await this.tryMatchOrder(order, pair);
+    await tradingEventPublisher.publishOrderCreated(order);
+
+    // Enqueue matching job instead of blocking
+    await this.matchingQueue.add(
+      'match-order',
+      {
+        orderId: order.id,
+        tradingPairId: pair.id
+      },
+      {
+        jobId: `match-${order.id}`,
+        priority: input.orderType === 'MARKET' ? 1 : 5, // Market orders get higher priority
+        attempts: 5,
+        backoff: {
+          type: 'exponential',
+          delay: 1000
+        }
+      }
+    );
 
     logger.info(
       { orderId: order.id, userId: input.userId, pair: pair.pairSymbol },
-      'Order submitted'
+      'Order submitted and queued for matching'
     );
 
     return order;
@@ -140,6 +203,8 @@ export class TradingService {
       orderId,
       details: {}
     });
+
+    await tradingEventPublisher.publishOrderCancelled(updatedOrder);
 
     logger.info({ orderId, userId }, 'Order cancelled');
 
@@ -329,6 +394,9 @@ export class TradingService {
       await this.invalidateOrderBookCache(pair.id);
       await this.cacheRecentTrade(trade);
 
+      await tradingEventPublisher.publishTradeExecuted(trade);
+      await tradingEventPublisher.publishTradeSettlementPending(trade.id);
+
       await this.settlementQueue.add('execute-blockchain-settlement', {
         tradeId: trade.id,
         tradingPairId: pair.id
@@ -479,5 +547,67 @@ export class TradingService {
     const redis = getRedisClient();
     const cached = await redis.get(`market:${tradingPairId}:stats`);
     return cached ? JSON.parse(cached) : null;
+  }
+
+  /**
+   * Validate RWA compliance for trading
+   * Ensures market is active and user meets compliance requirements
+   */
+  private async validateRwaCompliance(
+    marketId: string,
+    userId: string,
+    pair: TradingPair
+  ): Promise<void> {
+    // Check if market is active
+    const market = await findMarketById(marketId);
+    if (!market) {
+      throw new ApplicationError('Market not found', {
+        statusCode: 404,
+        code: 'market_not_found'
+      });
+    }
+
+    if (market.status !== 'active') {
+      throw new ApplicationError('Market is not active for trading', {
+        statusCode: 400,
+        code: 'market_not_active',
+        details: { marketStatus: market.status }
+      });
+    }
+
+    // Get base token (RWA token) details
+    const baseToken = await findTokenById(pair.baseTokenId);
+    if (!baseToken) {
+      throw new ApplicationError('Base token not found', {
+        statusCode: 404,
+        code: 'token_not_found'
+      });
+    }
+
+    // For RWA tokens, verify compliance
+    if (baseToken.tokenType === 'RWA') {
+      try {
+        await this.tokenService.verifyCompliance(userId, baseToken.id);
+      } catch (error) {
+        logger.warn(
+          { userId, tokenId: baseToken.id, marketId, error },
+          'RWA compliance check failed'
+        );
+        throw new ApplicationError('User does not meet RWA compliance requirements', {
+          statusCode: 403,
+          code: 'compliance_failed',
+          details: {
+            reason: error instanceof Error ? error.message : 'Compliance verification failed',
+            tokenSymbol: baseToken.tokenSymbol,
+            assetType: market.assetType
+          }
+        });
+      }
+    }
+
+    logger.debug(
+      { userId, marketId, tokenSymbol: baseToken.tokenSymbol },
+      'RWA compliance validated'
+    );
   }
 }

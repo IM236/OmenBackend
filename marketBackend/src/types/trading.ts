@@ -1,11 +1,12 @@
 export type OrderSide = 'BUY' | 'SELL';
 export type OrderType = 'LIMIT' | 'MARKET' | 'STOP_LIMIT';
-export type OrderStatus = 'OPEN' | 'PARTIAL' | 'FILLED' | 'CANCELLED' | 'REJECTED';
+export type OrderStatus = 'PENDING_MATCH' | 'OPEN' | 'PARTIAL' | 'FILLED' | 'CANCELLED' | 'REJECTED';
 export type TimeInForce = 'GTC' | 'IOC' | 'FOK';
 export type SettlementStatus = 'PENDING' | 'SETTLED' | 'FAILED';
 
 export interface TradingPair {
   id: string;
+  marketId: string | null;
   baseTokenId: string;
   quoteTokenId: string;
   pairSymbol: string;
@@ -86,12 +87,16 @@ export interface MarketStats {
 
 export interface CreateOrderInput {
   userId: string;
+  userAddress: string;
   tradingPairId: string;
   side: OrderSide;
   orderType: OrderType;
   price?: string;
   quantity: string;
   timeInForce?: TimeInForce;
+  signature: string;
+  nonce: string;
+  expiry: number;
   metadata?: Record<string, unknown>;
 }
 

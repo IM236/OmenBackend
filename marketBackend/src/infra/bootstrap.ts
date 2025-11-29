@@ -6,6 +6,9 @@ import { initializeEventListeners, shutdownEventListeners } from '@infra/events'
 import { logger } from '@infra/logging/logger';
 import { startTransactionManager, stopTransactionManager } from '@services/transactionManagerSingleton';
 import { initializeTokenDeploymentWorker } from '@infra/queue/tokenDeploymentHandler';
+import { initializeSettlementWorker } from '@infra/queue/settlementWorkerHandler';
+import { initializeReconciliationWorker, scheduleReconciliation } from '@infra/queue/reconciliationWorkerHandler';
+import { initializeMatchingWorker } from '@infra/queue/matchingWorkerHandler';
 
 export const bootstrapInfrastructure = async (): Promise<void> => {
   logger.info('Bootstrapping infrastructure components');
@@ -16,6 +19,10 @@ export const bootstrapInfrastructure = async (): Promise<void> => {
   await initializeEventListeners();
   await startTransactionManager();
   initializeTokenDeploymentWorker();
+  initializeSettlementWorker();
+  initializeReconciliationWorker();
+  initializeMatchingWorker();
+  await scheduleReconciliation();
 };
 
 export const shutdownInfrastructure = async (): Promise<void> => {

@@ -29,21 +29,62 @@ export const listActiveTradingPairs = async (): Promise<TradingPair[]> => {
   return result.rows.map(mapTradingPairRow);
 };
 
+export const findTradingPairByMarketId = async (marketId: string): Promise<TradingPair | null> => {
+  const pool = getDatabasePool();
+  const result = await pool.query('SELECT * FROM trading_pairs WHERE market_id = $1', [marketId]);
+  return result.rows.length > 0 ? mapTradingPairRow(result.rows[0]) : null;
+};
+
+export const createTradingPair = async (data: {
+  marketId?: string;
+  baseTokenId: string;
+  quoteTokenId: string;
+  pairSymbol: string;
+  minOrderSize?: string;
+  maxOrderSize?: string;
+  pricePrecision?: number;
+  quantityPrecision?: number;
+  metadata?: Record<string, unknown>;
+}): Promise<TradingPair> => {
+  const pool = getDatabasePool();
+  const result = await pool.query(
+    `INSERT INTO trading_pairs (
+       market_id, base_token_id, quote_token_id, pair_symbol,
+       min_order_size, max_order_size, price_precision, quantity_precision, metadata
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      data.marketId || null,
+      data.baseTokenId,
+      data.quoteTokenId,
+      data.pairSymbol,
+      data.minOrderSize || null,
+      data.maxOrderSize || null,
+      data.pricePrecision || 8,
+      data.quantityPrecision || 8,
+      JSON.stringify(data.metadata || {})
+    ]
+  );
+  return mapTradingPairRow(result.rows[0]);
+};
+
 export const createOrder = async (
-  input: CreateOrderInput & { orderNumber?: bigint }
+  input: CreateOrderInput & { orderNumber?: bigint; status?: OrderStatus }
 ): Promise<Order> => {
   const pool = getDatabasePool();
   const result = await pool.query(
     `INSERT INTO orders (
-       user_id, trading_pair_id, side, order_type, price, quantity, time_in_force, metadata
+       user_id, trading_pair_id, side, order_type, status, price, quantity, time_in_force, metadata
      )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
     [
       input.userId,
       input.tradingPairId,
       input.side,
       input.orderType,
+      input.status || 'OPEN',
       input.price || null,
       input.quantity,
       input.timeInForce || 'GTC',
@@ -305,6 +346,7 @@ export const insertAuditLog = async (data: {
 
 const mapTradingPairRow = (row: any): TradingPair => ({
   id: row.id,
+  marketId: row.market_id,
   baseTokenId: row.base_token_id,
   quoteTokenId: row.quote_token_id,
   pairSymbol: row.pair_symbol,

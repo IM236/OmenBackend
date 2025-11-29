@@ -21,6 +21,8 @@ let candleAggregationQueue: Queue | null = null;
 let metadataUpdateQueue: Queue | null = null;
 let withdrawalQueue: Queue | null = null;
 let tokenDeploymentQueue: Queue | null = null;
+let reconciliationQueue: Queue | null = null;
+let matchingQueue: Queue | null = null;
 
 const workers: Worker[] = [];
 
@@ -111,6 +113,24 @@ export const initializeQueues = async (): Promise<void> => {
   tokenDeploymentQueue = new Queue('deploy-token', {
     connection: createQueueConnection(),
     defaultJobOptions: { ...defaultOptions, attempts: 5 }
+  });
+
+  reconciliationQueue = new Queue('blockchain-reconciliation', {
+    connection: createQueueConnection(),
+    defaultJobOptions: { ...defaultOptions, attempts: 3 }
+  });
+
+  matchingQueue = new Queue('order-matching', {
+    connection: createQueueConnection(),
+    defaultJobOptions: {
+      ...defaultOptions,
+      attempts: 5,
+      removeOnComplete: {
+        count: 1000, // Keep last 1000 successful matches for debugging
+        age: 3600 // Remove after 1 hour
+      },
+      removeOnFail: false
+    }
   });
 
   logger.info('All BullMQ queues initialized');
@@ -222,6 +242,20 @@ export const getTokenDeploymentQueue = (): Queue => {
   return tokenDeploymentQueue;
 };
 
+export const getReconciliationQueue = (): Queue => {
+  if (!reconciliationQueue) {
+    throw new Error('Reconciliation queue not initialised.');
+  }
+  return reconciliationQueue;
+};
+
+export const getMatchingQueue = (): Queue => {
+  if (!matchingQueue) {
+    throw new Error('Matching queue not initialised.');
+  }
+  return matchingQueue;
+};
+
 export const shutdownQueues = async (): Promise<void> => {
   const allQueues = [
     transactionQueue,
@@ -237,7 +271,9 @@ export const shutdownQueues = async (): Promise<void> => {
     candleAggregationQueue,
     metadataUpdateQueue,
     withdrawalQueue,
-    tokenDeploymentQueue
+    tokenDeploymentQueue,
+    reconciliationQueue,
+    matchingQueue
   ];
 
   const allWorkers = [transactionWorker, ...workers];
@@ -266,5 +302,7 @@ export const shutdownQueues = async (): Promise<void> => {
   metadataUpdateQueue = null;
   withdrawalQueue = null;
   tokenDeploymentQueue = null;
+  reconciliationQueue = null;
+  matchingQueue = null;
   workers.length = 0;
 };

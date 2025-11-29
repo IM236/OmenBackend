@@ -7,6 +7,9 @@ import {
   updateMarketStatus,
   findMarketById
 } from '@infra/database/repositories/marketRepository';
+import { createToken, findTokenBySymbol } from '@infra/database/repositories/tokenRepository';
+import { createTradingPair, findTradingPairByMarketId } from '@infra/database/repositories/tradingRepository';
+import { usdcTokenService } from '@services/usdcTokenService';
 import { logger } from '@infra/logging/logger';
 import { TokenDeploymentJobData, createTokenDeploymentWorker } from './workers';
 import { registerWorker } from './index';
@@ -76,6 +79,57 @@ export const handleTokenDeployment = async (
       deployment.txHash
     );
 
+    // Create token record in database
+    let rwaToken = await findTokenBySymbol(tokenSymbol);
+    if (!rwaToken) {
+      rwaToken = await createToken({
+        tokenSymbol,
+        tokenName,
+        tokenType: 'RWA',
+        contractAddress: deployment.address,
+        blockchain: 'sapphire',
+        decimals,
+        totalSupply,
+        metadata: {
+          marketId,
+          assetType: market.assetType,
+          deploymentTxHash: deployment.txHash
+        }
+      });
+
+      logger.info(
+        { tokenId: rwaToken.id, tokenSymbol, marketId },
+        'RWA token record created'
+      );
+    }
+
+    // Create trading pair with USDC
+    const usdcTokenId = await usdcTokenService.getUsdcTokenId();
+
+    const existingPair = await findTradingPairByMarketId(marketId);
+    if (!existingPair) {
+      const tradingPair = await createTradingPair({
+        marketId,
+        baseTokenId: rwaToken.id,
+        quoteTokenId: usdcTokenId,
+        pairSymbol: `${tokenSymbol}-USDC`,
+        minOrderSize: '1',
+        maxOrderSize: totalSupply,
+        pricePrecision: 6,
+        quantityPrecision: parseInt(decimals.toString()),
+        metadata: {
+          assetType: market.assetType,
+          marketName: market.name,
+          createdBy: 'system'
+        }
+      });
+
+      logger.info(
+        { tradingPairId: tradingPair.id, pairSymbol: tradingPair.pairSymbol, marketId },
+        'Trading pair created for RWA market'
+      );
+    }
+
     // Publish activation completed event
     await marketEventBroker.publishEvent({
       marketId,
@@ -86,13 +140,15 @@ export const handleTokenDeployment = async (
         contractAddress: deployment.address,
         txHash: deployment.txHash,
         tokenSymbol,
+        tokenId: rwaToken.id,
+        tradingPairCreated: true,
         jobId: job.id
       }
     });
 
     logger.info(
       { jobId: job.id, marketId, contractAddress: deployment.address },
-      'Market activated successfully'
+      'Market activated successfully with trading pair'
     );
   } catch (error) {
     logger.error({ error, jobId: job.id, marketId }, 'Token deployment failed');

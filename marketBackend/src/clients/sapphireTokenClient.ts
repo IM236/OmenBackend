@@ -3,6 +3,17 @@ import { logger } from '@infra/logging/logger';
 import { ApplicationError } from '@lib/errors';
 import { AppConfig } from '@config';
 
+const requireContractFunction = <T extends (...args: any[]) => any>(
+  contract: ethers.Contract,
+  functionName: string
+): T => {
+  const fn = (contract as Record<string, unknown>)[functionName];
+  if (typeof fn !== 'function') {
+    throw new Error(`Token contract is missing required function "${functionName}"`);
+  }
+  return fn.bind(contract) as T;
+};
+
 export interface MintTokenOnChainParams {
   tokenAddress: string;
   recipient: string;
@@ -48,12 +59,15 @@ export class SapphireTokenClient {
       ];
 
       const tokenContract = new ethers.Contract(params.tokenAddress, tokenAbi, wallet);
+      const mint = requireContractFunction<
+        (to: string, amount: ethers.BigNumberish) => Promise<ethers.ContractTransactionResponse>
+      >(tokenContract, 'mint');
 
-      const tx = await tokenContract.mint(params.recipient, params.amount);
+      const tx = await mint(params.recipient, params.amount);
       const receipt = await tx.wait();
 
       logger.info(
-        { txHash: receipt.hash, tokenAddress: params.tokenAddress, recipient: params.recipient },
+        { txHash: receipt?.hash, tokenAddress: params.tokenAddress, recipient: params.recipient },
         'Token minted on-chain'
       );
 
@@ -78,8 +92,11 @@ export class SapphireTokenClient {
       ];
 
       const tokenContract = new ethers.Contract(params.tokenAddress, tokenAbi, wallet);
+      const transfer = requireContractFunction<
+        (to: string, amount: ethers.BigNumberish) => Promise<ethers.ContractTransactionResponse>
+      >(tokenContract, 'transfer');
 
-      const tx = await tokenContract.transfer(params.to, params.amount);
+      const tx = await transfer(params.to, params.amount);
       const receipt = await tx.wait();
 
       logger.info(
@@ -103,8 +120,14 @@ export class SapphireTokenClient {
       const tokenAbi = ['function balanceOf(address owner) view returns (uint256)'];
 
       const tokenContract = new ethers.Contract(params.tokenAddress, tokenAbi, this.provider);
-
-      const balance = await tokenContract.balanceOf(params.owner);
+      if (!params.owner) {
+        throw new Error('Owner address is required to fetch token balance');
+      }
+      const balanceOf = requireContractFunction<(owner: string) => Promise<bigint>>(
+        tokenContract,
+        'balanceOf'
+      );
+      const balance = await balanceOf(params.owner);
 
       return balance.toString();
     } catch (error) {
