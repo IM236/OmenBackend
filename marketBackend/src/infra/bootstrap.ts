@@ -9,6 +9,7 @@ import { initializeTokenDeploymentWorker } from '@infra/queue/tokenDeploymentHan
 import { initializeSettlementWorker } from '@infra/queue/settlementWorkerHandler';
 import { initializeReconciliationWorker, scheduleReconciliation } from '@infra/queue/reconciliationWorkerHandler';
 import { initializeMatchingWorker } from '@infra/queue/matchingWorkerHandler';
+import { initializeSwapWorker } from '@infra/queue/swapWorkerHandler';
 
 export const bootstrapInfrastructure = async (): Promise<void> => {
   logger.info('Bootstrapping infrastructure components');
@@ -22,6 +23,7 @@ export const bootstrapInfrastructure = async (): Promise<void> => {
   initializeSettlementWorker();
   initializeReconciliationWorker();
   initializeMatchingWorker();
+  initializeSwapWorker();
   await scheduleReconciliation();
 };
 

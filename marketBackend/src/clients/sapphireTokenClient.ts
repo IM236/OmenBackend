@@ -42,6 +42,17 @@ export interface DeployTokenParams {
   signerPrivateKey: string;
 }
 
+export interface SwapTokensParams {
+  sourceTokenAddress: string;
+  targetTokenAddress: string;
+  amount: string;
+  recipient: string;
+  bridgeContractAddress: string;
+  targetChainId: string;
+  signerPrivateKey: string;
+  minTargetAmount?: string;
+}
+
 export class SapphireTokenClient {
   private provider: ethers.JsonRpcProvider;
 
@@ -197,6 +208,86 @@ export class SapphireTokenClient {
   async getBlockTimestamp(blockNumber: number): Promise<number> {
     const block = await this.provider.getBlock(blockNumber);
     return block?.timestamp || 0;
+  }
+
+  async swapTokens(params: SwapTokensParams): Promise<{ swapId: string; txHash: string }> {
+    try {
+      const wallet = new ethers.Wallet(params.signerPrivateKey, this.provider);
+      const bridgeAbi = [
+        'function swap(address sourceToken,address targetToken,uint256 amount,address recipient,string targetChain,uint256 minTargetAmount) returns (bytes32)',
+        'event SwapInitiated(bytes32 indexed swapId,address indexed user,address sourceToken,address targetToken,uint256 amount,string targetChain,uint256 minTargetAmount)'
+      ];
+
+      const bridgeContract = new ethers.Contract(
+        params.bridgeContractAddress,
+        bridgeAbi,
+        wallet
+      );
+
+      const swapFn = requireContractFunction<
+        (
+          sourceToken: string,
+          targetToken: string,
+          amount: ethers.BigNumberish,
+          recipient: string,
+          targetChain: string,
+          minTargetAmount: ethers.BigNumberish
+        ) => Promise<ethers.ContractTransactionResponse>
+      >(bridgeContract, 'swap');
+
+      const minTargetAmount = params.minTargetAmount ?? params.amount;
+      const tx = await swapFn(
+        params.sourceTokenAddress,
+        params.targetTokenAddress,
+        params.amount,
+        params.recipient,
+        params.targetChainId,
+        minTargetAmount
+      );
+      const receipt = await tx.wait();
+
+      let swapId: string | null = null;
+      if (receipt && receipt.logs?.length) {
+        for (const log of receipt.logs) {
+          try {
+            const parsed = bridgeContract.interface.parseLog(log);
+            if (parsed && parsed.name === 'SwapInitiated') {
+              swapId = parsed.args.swapId;
+              break;
+            }
+          } catch (parseError) {
+            logger.debug({ parseError }, 'Failed to parse swap log');
+          }
+        }
+      }
+
+      const computedSwapId =
+        swapId || ethers.id(`${receipt?.hash}:${params.sourceTokenAddress}:${params.amount}`);
+
+      logger.info(
+        {
+          swapId: computedSwapId,
+          txHash: receipt?.hash,
+          sourceToken: params.sourceTokenAddress,
+          targetToken: params.targetTokenAddress,
+          amount: params.amount,
+          targetChain: params.targetChainId
+        },
+        'Swap initiated on Sapphire bridge'
+      );
+
+      return {
+        swapId: computedSwapId,
+        txHash: receipt?.hash || ''
+      };
+    } catch (error) {
+      logger.error({ error, params }, 'Failed to execute Sapphire token swap');
+      throw new ApplicationError('Sapphire swap failed', {
+        statusCode: 500,
+        code: 'sapphire_swap_failed',
+        details: { error: error instanceof Error ? error.message : String(error) }
+      });
+    }
   }
 }
 

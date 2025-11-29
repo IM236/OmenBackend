@@ -23,6 +23,7 @@ let withdrawalQueue: Queue | null = null;
 let tokenDeploymentQueue: Queue | null = null;
 let reconciliationQueue: Queue | null = null;
 let matchingQueue: Queue | null = null;
+let swapQueue: Queue | null = null;
 
 const workers: Worker[] = [];
 
@@ -130,6 +131,18 @@ export const initializeQueues = async (): Promise<void> => {
         age: 3600 // Remove after 1 hour
       },
       removeOnFail: false
+    }
+  });
+
+  swapQueue = new Queue('process-token-swap', {
+    connection: createQueueConnection(),
+    defaultJobOptions: {
+      ...defaultOptions,
+      attempts: 5,
+      backoff: {
+        type: 'exponential',
+        delay: AppConfig.queues.retryBackoffMs
+      }
     }
   });
 
@@ -256,6 +269,13 @@ export const getMatchingQueue = (): Queue => {
   return matchingQueue;
 };
 
+export const getSwapQueue = (): Queue => {
+  if (!swapQueue) {
+    throw new Error('Swap queue not initialised.');
+  }
+  return swapQueue;
+};
+
 export const shutdownQueues = async (): Promise<void> => {
   const allQueues = [
     transactionQueue,
@@ -273,7 +293,8 @@ export const shutdownQueues = async (): Promise<void> => {
     withdrawalQueue,
     tokenDeploymentQueue,
     reconciliationQueue,
-    matchingQueue
+    matchingQueue,
+    swapQueue
   ];
 
   const allWorkers = [transactionWorker, ...workers];
@@ -304,5 +325,6 @@ export const shutdownQueues = async (): Promise<void> => {
   tokenDeploymentQueue = null;
   reconciliationQueue = null;
   matchingQueue = null;
+  swapQueue = null;
   workers.length = 0;
 };

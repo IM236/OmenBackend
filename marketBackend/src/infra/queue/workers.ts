@@ -2,6 +2,7 @@ import { Worker, Job } from 'bullmq';
 import { logger } from '@infra/logging/logger';
 import { createQueueConnection } from './index';
 import { AppConfig } from '@config';
+import { SwapJobPayload } from '@app-types/swap';
 
 export interface MintTokenJobData {
   tokenId: string;
@@ -72,6 +73,8 @@ export interface TokenDeploymentJobData {
   totalSupply: string;
   actorId: string;
 }
+
+export interface SwapJobData extends SwapJobPayload {}
 
 export const createMintTokenWorker = (
   handler: (job: Job<MintTokenJobData>) => Promise<void>
@@ -202,6 +205,28 @@ export const createNotificationWorker = (
     logger.error(
       { jobId: job?.id, tradeId: job?.data?.tradeId, error: err },
       'Notification failed'
+    );
+  });
+
+  return worker;
+};
+
+export const createSwapWorker = (
+  handler: (job: Job<SwapJobData>) => Promise<void>
+): Worker => {
+  const worker = new Worker('process-token-swap', handler, {
+    connection: createQueueConnection(),
+    concurrency: AppConfig.queues.workerConcurrency || 5
+  });
+
+  worker.on('completed', (job) => {
+    logger.info({ jobId: job.id, swapId: job.data.swapId }, 'Swap job completed');
+  });
+
+  worker.on('failed', (job, err) => {
+    logger.error(
+      { jobId: job?.id, swapId: job?.data?.swapId, error: err },
+      'Swap job failed'
     );
   });
 

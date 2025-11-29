@@ -2,6 +2,7 @@ import { getMarketEventListener } from '@infra/events';
 import { MarketService } from '@services/marketService';
 import { TradingService } from '@services/tradingService';
 import { TokenService } from '@services/tokenService';
+import { SwapService } from '@services/swapService';
 import {
   getSettlementQueue,
   getNotificationQueue,
@@ -10,7 +11,8 @@ import {
   getMintTokenQueue,
   getTransferQueue,
   getBlockchainSyncQueue,
-  getComplianceQueue
+  getComplianceQueue,
+  getSwapQueue
 } from '@infra/queue';
 import { createEIP712Verifier } from '@lib/signature/eip712';
 import { AppConfig } from '@config';
@@ -18,6 +20,7 @@ import { AppConfig } from '@config';
 let marketService: MarketService | null = null;
 let tradingService: TradingService | null = null;
 let tokenService: TokenService | null = null;
+let swapService: SwapService | null = null;
 
 export const getMarketService = (): MarketService => {
   if (!marketService) {
@@ -56,4 +59,12 @@ export const getTokenService = (): TokenService => {
   }
 
   return tokenService;
+};
+
+export const getSwapService = (): SwapService => {
+  if (!swapService) {
+    swapService = new SwapService(getSwapQueue(), getTokenService());
+  }
+
+  return swapService;
 };
