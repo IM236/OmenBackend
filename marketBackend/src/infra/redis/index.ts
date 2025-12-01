@@ -12,7 +12,8 @@ export const initializeRedis = async (): Promise<void> => {
 
   const options: RedisOptions = {
     maxRetriesPerRequest: null,
-    enableReadyCheck: true
+    enableReadyCheck: true,
+    lazyConnect: true
   };
 
   if (AppConfig.redis.password) {

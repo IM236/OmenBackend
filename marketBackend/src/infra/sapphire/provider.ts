@@ -16,6 +16,9 @@ const mockWrapEthersSigner = <T extends Wallet | HDNodeWallet>(ethersSigner: T):
   return ethersSigner;
 };
 
+const DEFAULT_DEV_MNEMONIC =
+  'test walk nut penalty hip pave soap entry language right filter choice';
+
 export const initializeSapphire = async (): Promise<void> => {
   if (runtimeContext) {
     return;
@@ -41,13 +44,31 @@ export const initializeSapphire = async (): Promise<void> => {
   });
 
   // Create wallet from private key or mnemonic
-  let baseSigner: Wallet | HDNodeWallet;
-  if (AppConfig.sapphire.mnemonic && AppConfig.sapphire.mnemonic.length > 0) {
-    baseSigner = Wallet.fromPhrase(AppConfig.sapphire.mnemonic, provider);
+  const createMockSigner = (reason: string, error?: unknown): Wallet => {
+    const mockSigner = Wallet.fromPhrase(DEFAULT_DEV_MNEMONIC).connect(provider);
+    logger.warn(
+      { reason, address: mockSigner.address, err: error },
+      'Using mock Sapphire signer for development'
+    );
+    return mockSigner;
+  };
+
+  let baseSigner: Wallet;
+  const mnemonic = AppConfig.sapphire.mnemonic?.trim();
+  if (mnemonic) {
+    try {
+      baseSigner = Wallet.fromPhrase(mnemonic).connect(provider);
+    } catch (error) {
+      baseSigner = createMockSigner('invalid mnemonic', error);
+    }
   } else if (AppConfig.sapphire.privateKey) {
-    baseSigner = new Wallet(AppConfig.sapphire.privateKey, provider);
+    try {
+      baseSigner = new Wallet(AppConfig.sapphire.privateKey, provider);
+    } catch (error) {
+      baseSigner = createMockSigner('invalid private key', error);
+    }
   } else {
-    throw new Error('No private key or mnemonic configured for Sapphire');
+    baseSigner = createMockSigner('missing credentials');
   }
 
   // Connect wallet to provider and wrap with Sapphire encryption (mocked until Sapphire is enabled)

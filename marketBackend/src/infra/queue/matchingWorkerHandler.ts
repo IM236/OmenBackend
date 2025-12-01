@@ -1,6 +1,4 @@
 import { Job, Worker } from 'bullmq';
-import { logger } from '@infra/logging/logger';
-import { createQueueConnection, registerWorker } from './index';
 import { getDatabasePool } from '@infra/database';
 import { getRedisClient } from '@infra/redis';
 import {
@@ -14,6 +12,9 @@ import {
 import { Order, TradingPair, Trade } from '@app-types/trading';
 import { tradingEventPublisher } from '@lib/events/tradingEventPublisher';
 import { TokenService } from '@services/tokenService';
+import { getTokenService } from '@services/factory';
+import { logger } from '@infra/logging/logger';
+import { createQueueConnection, registerWorker } from './index';
 import {
   getSettlementQueue,
   getNotificationQueue,
@@ -588,8 +589,6 @@ export const initializeMatchingWorker = (): void => {
     return;
   }
 
-  // Import at runtime to avoid circular dependencies
-  const { getTokenService } = require('@services/factory');
   const tokenService = getTokenService();
 
   matchingWorkerInstance = createMatchingWorker(tokenService);

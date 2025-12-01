@@ -3,6 +3,26 @@ import { z } from 'zod';
 
 loadEnv();
 
+const booleanString = z
+  .union([z.boolean(), z.string()])
+  .transform((value) => {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+
+    const normalized = value.trim().toLowerCase();
+
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) {
+      return true;
+    }
+
+    if (['false', '0', 'no', 'n', 'off', ''].includes(normalized)) {
+      return false;
+    }
+
+    throw new Error(`Invalid boolean value: ${value}`);
+  });
+
 const EnvironmentSchema = z
   .object({
     NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
@@ -14,12 +34,12 @@ const EnvironmentSchema = z
     DATABASE_URL: z
       .string()
       .default('postgresql://postgres:postgres@localhost:5432/market_backend'),
-    DATABASE_SSL: z.coerce.boolean().optional(),
+    DATABASE_SSL: booleanString.optional(),
     DATABASE_POOL_MIN: z.coerce.number().default(2),
     DATABASE_POOL_MAX: z.coerce.number().default(10),
     REDIS_URL: z.string().default('redis://localhost:6379'),
     REDIS_PASSWORD: z.string().optional(),
-    REDIS_TLS: z.coerce.boolean().optional(),
+    REDIS_TLS: booleanString.optional(),
     ENTITY_PERMISSIONS_BASE_URL: z
       .string()
       .default('http://localhost:8000/api/v1'),
@@ -40,7 +60,7 @@ const EnvironmentSchema = z
     ADMIN_JWT_PUBLIC_KEY: z.string().optional(),
     RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60_000),
     RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
-    ENABLE_WEBSOCKETS: z.coerce.boolean().default(true)
+    ENABLE_WEBSOCKETS: booleanString.optional().transform((value) => value ?? true)
   })
   .superRefine((value, ctx) => {
     if (!value.ADMIN_API_KEY && !value.ADMIN_JWT_PUBLIC_KEY) {
